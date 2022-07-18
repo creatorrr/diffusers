@@ -321,6 +321,7 @@ class ModelMixin(torch.nn.Module):
         use_auth_token = kwargs.pop("use_auth_token", None)
         revision = kwargs.pop("revision", None)
         from_auto_class = kwargs.pop("_from_auto", False)
+        subfolder = kwargs.pop("subfolder", None)
 
         user_agent = {"file_type": "model", "framework": "pytorch", "from_auto_class": from_auto_class}
 
@@ -336,6 +337,7 @@ class ModelMixin(torch.nn.Module):
             local_files_only=local_files_only,
             use_auth_token=use_auth_token,
             revision=revision,
+            subfolder=subfolder,
             **kwargs,
         )
         model.register_to_config(name_or_path=pretrained_model_name_or_path)
@@ -346,6 +348,10 @@ class ModelMixin(torch.nn.Module):
             if os.path.isfile(os.path.join(pretrained_model_name_or_path, WEIGHTS_NAME)):
                 # Load from a PyTorch checkpoint
                 model_file = os.path.join(pretrained_model_name_or_path, WEIGHTS_NAME)
+            elif subfolder is not None and os.path.isfile(
+                os.path.join(pretrained_model_name_or_path, subfolder, WEIGHTS_NAME)
+            ):
+                model_file = os.path.join(pretrained_model_name_or_path, subfolder, WEIGHTS_NAME)
             else:
                 raise EnvironmentError(
                     f"Error no file named {WEIGHTS_NAME} found in directory {pretrained_model_name_or_path}."
@@ -363,6 +369,7 @@ class ModelMixin(torch.nn.Module):
                     local_files_only=local_files_only,
                     use_auth_token=use_auth_token,
                     user_agent=user_agent,
+                    subfolder=subfolder,
                 )
 
             except RepositoryNotFoundError:
@@ -489,44 +496,46 @@ class ModelMixin(torch.nn.Module):
                 )
             raise RuntimeError(f"Error(s) in loading state_dict for {model.__class__.__name__}:\n\t{error_msg}")
 
-        if len(unexpected_keys) > 0:
-            logger.warning(
-                f"Some weights of the model checkpoint at {pretrained_model_name_or_path} were not used when"
-                f" initializing {model.__class__.__name__}: {unexpected_keys}\n- This IS expected if you are"
-                f" initializing {model.__class__.__name__} from the checkpoint of a model trained on another task or"
-                " with another architecture (e.g. initializing a BertForSequenceClassification model from a"
-                " BertForPreTraining model).\n- This IS NOT expected if you are initializing"
-                f" {model.__class__.__name__} from the checkpoint of a model that you expect to be exactly identical"
-                " (initializing a BertForSequenceClassification model from a BertForSequenceClassification model)."
-            )
-        else:
-            logger.info(f"All model checkpoint weights were used when initializing {model.__class__.__name__}.\n")
-        if len(missing_keys) > 0:
-            logger.warning(
-                f"Some weights of {model.__class__.__name__} were not initialized from the model checkpoint at"
-                f" {pretrained_model_name_or_path} and are newly initialized: {missing_keys}\nYou should probably"
-                " TRAIN this model on a down-stream task to be able to use it for predictions and inference."
-            )
-        elif len(mismatched_keys) == 0:
-            logger.info(
-                f"All the weights of {model.__class__.__name__} were initialized from the model checkpoint at"
-                f" {pretrained_model_name_or_path}.\nIf your task is similar to the task the model of the checkpoint"
-                f" was trained on, you can already use {model.__class__.__name__} for predictions without further"
-                " training."
-            )
-        if len(mismatched_keys) > 0:
-            mismatched_warning = "\n".join(
-                [
-                    f"- {key}: found shape {shape1} in the checkpoint and {shape2} in the model instantiated"
-                    for key, shape1, shape2 in mismatched_keys
-                ]
-            )
-            logger.warning(
-                f"Some weights of {model.__class__.__name__} were not initialized from the model checkpoint at"
-                f" {pretrained_model_name_or_path} and are newly initialized because the shapes did not"
-                f" match:\n{mismatched_warning}\nYou should probably TRAIN this model on a down-stream task to be able"
-                " to use it for predictions and inference."
-            )
+        if False:
+            if len(unexpected_keys) > 0:
+                logger.warning(
+                    f"Some weights of the model checkpoint at {pretrained_model_name_or_path} were not used when"
+                    f" initializing {model.__class__.__name__}: {unexpected_keys}\n- This IS expected if you are"
+                    f" initializing {model.__class__.__name__} from the checkpoint of a model trained on another task"
+                    " or with another architecture (e.g. initializing a BertForSequenceClassification model from a"
+                    " BertForPreTraining model).\n- This IS NOT expected if you are initializing"
+                    f" {model.__class__.__name__} from the checkpoint of a model that you expect to be exactly"
+                    " identical (initializing a BertForSequenceClassification model from a"
+                    " BertForSequenceClassification model)."
+                )
+            else:
+                logger.info(f"All model checkpoint weights were used when initializing {model.__class__.__name__}.\n")
+            if len(missing_keys) > 0:
+                logger.warning(
+                    f"Some weights of {model.__class__.__name__} were not initialized from the model checkpoint at"
+                    f" {pretrained_model_name_or_path} and are newly initialized: {missing_keys}\nYou should probably"
+                    " TRAIN this model on a down-stream task to be able to use it for predictions and inference."
+                )
+            elif len(mismatched_keys) == 0:
+                logger.info(
+                    f"All the weights of {model.__class__.__name__} were initialized from the model checkpoint at"
+                    f" {pretrained_model_name_or_path}.\nIf your task is similar to the task the model of the"
+                    f" checkpoint was trained on, you can already use {model.__class__.__name__} for predictions"
+                    " without further training."
+                )
+            if len(mismatched_keys) > 0:
+                mismatched_warning = "\n".join(
+                    [
+                        f"- {key}: found shape {shape1} in the checkpoint and {shape2} in the model instantiated"
+                        for key, shape1, shape2 in mismatched_keys
+                    ]
+                )
+                logger.warning(
+                    f"Some weights of {model.__class__.__name__} were not initialized from the model checkpoint at"
+                    f" {pretrained_model_name_or_path} and are newly initialized because the shapes did not"
+                    f" match:\n{mismatched_warning}\nYou should probably TRAIN this model on a down-stream task to be"
+                    " able to use it for predictions and inference."
+                )
 
         return model, missing_keys, unexpected_keys, mismatched_keys, error_msgs
 

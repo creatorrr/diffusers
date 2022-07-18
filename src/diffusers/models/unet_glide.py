@@ -6,7 +6,8 @@ from ..configuration_utils import ConfigMixin
 from ..modeling_utils import ModelMixin
 from .attention import AttentionBlock
 from .embeddings import get_timestep_embedding
-from .resnet import Downsample, ResBlock, TimestepBlock, Upsample
+from .resnet import Downsample2D, ResnetBlock2D, Upsample2D
+from .unet_new import UNetMidBlock2D
 
 
 def convert_module_to_f16(l):
@@ -27,19 +28,6 @@ def convert_module_to_f32(l):
         l.weight.data = l.weight.data.float()
         if l.bias is not None:
             l.bias.data = l.bias.data.float()
-
-
-def avg_pool_nd(dims, *args, **kwargs):
-    """
-    Create a 1D, 2D, or 3D average pooling module.
-    """
-    if dims == 1:
-        return nn.AvgPool1d(*args, **kwargs)
-    elif dims == 2:
-        return nn.AvgPool2d(*args, **kwargs)
-    elif dims == 3:
-        return nn.AvgPool3d(*args, **kwargs)
-    raise ValueError(f"unsupported dimensions: {dims}")
 
 
 def conv_nd(dims, *args, **kwargs):
@@ -94,14 +82,14 @@ def zero_module(module):
     return module
 
 
-class TimestepEmbedSequential(nn.Sequential, TimestepBlock):
+class TimestepEmbedSequential(nn.Sequential):
     """
     A sequential module that passes timestep embeddings to the children that support it as an extra input.
     """
 
     def forward(self, x, emb, encoder_out=None):
         for layer in self:
-            if isinstance(layer, TimestepBlock):
+            if isinstance(layer, ResnetBlock2D) or isinstance(layer, TimestepEmbedSequential):
                 x = layer(x, emb)
             elif isinstance(layer, AttentionBlock):
                 x = layer(x, encoder_out)
@@ -190,14 +178,15 @@ class GlideUNetModel(ModelMixin, ConfigMixin):
         for level, mult in enumerate(channel_mult):
             for _ in range(num_res_blocks):
                 layers = [
-                    ResBlock(
-                        ch,
-                        time_embed_dim,
-                        dropout,
-                        out_channels=int(mult * model_channels),
-                        dims=dims,
-                        use_checkpoint=use_checkpoint,
-                        use_scale_shift_norm=use_scale_shift_norm,
+                    ResnetBlock2D(
+                        in_channels=ch,
+                        out_channels=mult * model_channels,
+                        dropout=dropout,
+                        temb_channels=time_embed_dim,
+                        eps=1e-5,
+                        non_linearity="silu",
+                        time_embedding_norm="scale_shift" if use_scale_shift_norm else "default",
+                        overwrite_for_glide=True,
                     )
                 ]
                 ch = int(mult * model_channels)
@@ -205,7 +194,6 @@ class GlideUNetModel(ModelMixin, ConfigMixin):
                     layers.append(
                         AttentionBlock(
                             ch,
-                            use_checkpoint=use_checkpoint,
                             num_heads=num_heads,
                             num_head_channels=num_head_channels,
                             encoder_channels=transformer_dim,
@@ -218,20 +206,19 @@ class GlideUNetModel(ModelMixin, ConfigMixin):
                 out_ch = ch
                 self.input_blocks.append(
                     TimestepEmbedSequential(
-                        ResBlock(
-                            ch,
-                            time_embed_dim,
-                            dropout,
+                        ResnetBlock2D(
+                            in_channels=ch,
                             out_channels=out_ch,
-                            dims=dims,
-                            use_checkpoint=use_checkpoint,
-                            use_scale_shift_norm=use_scale_shift_norm,
+                            dropout=dropout,
+                            temb_channels=time_embed_dim,
+                            eps=1e-5,
+                            non_linearity="silu",
+                            time_embedding_norm="scale_shift" if use_scale_shift_norm else "default",
+                            overwrite_for_glide=True,
                             down=True,
                         )
                         if resblock_updown
-                        else Downsample(
-                            ch, use_conv=conv_resample, dims=dims, out_channels=out_ch, padding=1, name="op"
-                        )
+                        else Downsample2D(ch, use_conv=conv_resample, out_channels=out_ch, padding=1, name="op")
                     )
                 )
                 ch = out_ch
@@ -239,31 +226,50 @@ class GlideUNetModel(ModelMixin, ConfigMixin):
                 ds *= 2
                 self._feature_size += ch
 
+        self.mid = UNetMidBlock2D(
+            in_channels=ch,
+            dropout=dropout,
+            temb_channels=time_embed_dim,
+            resnet_eps=1e-5,
+            resnet_act_fn="silu",
+            resnet_time_scale_shift="scale_shift" if use_scale_shift_norm else "default",
+            attn_num_heads=num_heads,
+            attn_num_head_channels=num_head_channels,
+            attn_encoder_channels=transformer_dim,
+        )
+
+        # TODO(Patrick) - delete after weight conversion
+        # init to be able to overwrite `self.mid`
         self.middle_block = TimestepEmbedSequential(
-            ResBlock(
-                ch,
-                time_embed_dim,
-                dropout,
-                dims=dims,
-                use_checkpoint=use_checkpoint,
-                use_scale_shift_norm=use_scale_shift_norm,
+            ResnetBlock2D(
+                in_channels=ch,
+                dropout=dropout,
+                temb_channels=time_embed_dim,
+                eps=1e-5,
+                non_linearity="silu",
+                time_embedding_norm="scale_shift" if use_scale_shift_norm else "default",
+                overwrite_for_glide=True,
             ),
             AttentionBlock(
                 ch,
-                use_checkpoint=use_checkpoint,
                 num_heads=num_heads,
                 num_head_channels=num_head_channels,
                 encoder_channels=transformer_dim,
             ),
-            ResBlock(
-                ch,
-                time_embed_dim,
-                dropout,
-                dims=dims,
-                use_checkpoint=use_checkpoint,
-                use_scale_shift_norm=use_scale_shift_norm,
+            ResnetBlock2D(
+                in_channels=ch,
+                dropout=dropout,
+                temb_channels=time_embed_dim,
+                eps=1e-5,
+                non_linearity="silu",
+                time_embedding_norm="scale_shift" if use_scale_shift_norm else "default",
+                overwrite_for_glide=True,
             ),
         )
+        self.mid.resnets[0] = self.middle_block[0]
+        self.mid.attentions[0] = self.middle_block[1]
+        self.mid.resnets[1] = self.middle_block[2]
+
         self._feature_size += ch
 
         self.output_blocks = nn.ModuleList([])
@@ -271,22 +277,22 @@ class GlideUNetModel(ModelMixin, ConfigMixin):
             for i in range(num_res_blocks + 1):
                 ich = input_block_chans.pop()
                 layers = [
-                    ResBlock(
-                        ch + ich,
-                        time_embed_dim,
-                        dropout,
-                        out_channels=int(model_channels * mult),
-                        dims=dims,
-                        use_checkpoint=use_checkpoint,
-                        use_scale_shift_norm=use_scale_shift_norm,
-                    )
+                    ResnetBlock2D(
+                        in_channels=ch + ich,
+                        out_channels=model_channels * mult,
+                        dropout=dropout,
+                        temb_channels=time_embed_dim,
+                        eps=1e-5,
+                        non_linearity="silu",
+                        time_embedding_norm="scale_shift" if use_scale_shift_norm else "default",
+                        overwrite_for_glide=True,
+                    ),
                 ]
                 ch = int(model_channels * mult)
                 if ds in attention_resolutions:
                     layers.append(
                         AttentionBlock(
                             ch,
-                            use_checkpoint=use_checkpoint,
                             num_heads=num_heads_upsample,
                             num_head_channels=num_head_channels,
                             encoder_channels=transformer_dim,
@@ -295,18 +301,19 @@ class GlideUNetModel(ModelMixin, ConfigMixin):
                 if level and i == num_res_blocks:
                     out_ch = ch
                     layers.append(
-                        ResBlock(
-                            ch,
-                            time_embed_dim,
-                            dropout,
+                        ResnetBlock2D(
+                            in_channels=ch,
                             out_channels=out_ch,
-                            dims=dims,
-                            use_checkpoint=use_checkpoint,
-                            use_scale_shift_norm=use_scale_shift_norm,
+                            dropout=dropout,
+                            temb_channels=time_embed_dim,
+                            eps=1e-5,
+                            non_linearity="silu",
+                            time_embedding_norm="scale_shift" if use_scale_shift_norm else "default",
+                            overwrite_for_glide=True,
                             up=True,
                         )
                         if resblock_updown
-                        else Upsample(ch, use_conv=conv_resample, dims=dims, out_channels=out_ch)
+                        else Upsample2D(ch, use_conv=conv_resample, out_channels=out_ch)
                     )
                     ds //= 2
                 self.output_blocks.append(TimestepEmbedSequential(*layers))
@@ -352,7 +359,7 @@ class GlideUNetModel(ModelMixin, ConfigMixin):
         for module in self.input_blocks:
             h = module(h, emb)
             hs.append(h)
-        h = self.middle_block(h, emb)
+        h = self.mid(h, emb)
         for module in self.output_blocks:
             h = torch.cat([h, hs.pop()], dim=1)
             h = module(h, emb)
@@ -431,7 +438,9 @@ class GlideTextToImageUNetModel(GlideUNetModel):
 
         self.transformer_proj = nn.Linear(transformer_dim, self.model_channels * 4)
 
-    def forward(self, x, timesteps, transformer_out=None):
+    def forward(self, sample, timestep, transformer_out=None):
+        timesteps = timestep
+        x = sample
         hs = []
         emb = self.time_embed(
             get_timestep_embedding(timesteps, self.model_channels, flip_sin_to_cos=True, downscale_freq_shift=0)
@@ -447,7 +456,7 @@ class GlideTextToImageUNetModel(GlideUNetModel):
         for module in self.input_blocks:
             h = module(h, emb, transformer_out)
             hs.append(h)
-        h = self.middle_block(h, emb, transformer_out)
+        h = self.mid(h, emb, transformer_out)
         for module in self.output_blocks:
             other = hs.pop()
             h = torch.cat([h, other], dim=1)
@@ -521,7 +530,9 @@ class GlideSuperResUNetModel(GlideUNetModel):
             resblock_updown=resblock_updown,
         )
 
-    def forward(self, x, timesteps, low_res=None):
+    def forward(self, sample, timestep, low_res=None):
+        timesteps = timestep
+        x = sample
         _, _, new_height, new_width = x.shape
         upsampled = F.interpolate(low_res, (new_height, new_width), mode="bilinear")
         x = torch.cat([x, upsampled], dim=1)
@@ -535,7 +546,7 @@ class GlideSuperResUNetModel(GlideUNetModel):
         for module in self.input_blocks:
             h = module(h, emb)
             hs.append(h)
-        h = self.middle_block(h, emb)
+        h = self.mid(h, emb)
         for module in self.output_blocks:
             h = torch.cat([h, hs.pop()], dim=1)
             h = module(h, emb)

@@ -15,8 +15,10 @@
 # DISCLAIMER: This file is strongly influenced by https://github.com/ermongroup/ddim
 
 import math
+from typing import Union
 
 import numpy as np
+import torch
 
 from ..configuration_utils import ConfigMixin
 from .scheduling_utils import SchedulerMixin
@@ -48,7 +50,7 @@ def betas_for_alpha_bar(num_diffusion_timesteps, max_beta=0.999):
 class DDPMScheduler(SchedulerMixin, ConfigMixin):
     def __init__(
         self,
-        timesteps=1000,
+        num_train_timesteps=1000,
         beta_start=0.0001,
         beta_end=0.02,
         beta_schedule="linear",
@@ -60,7 +62,7 @@ class DDPMScheduler(SchedulerMixin, ConfigMixin):
     ):
         super().__init__()
         self.register_to_config(
-            timesteps=timesteps,
+            num_train_timesteps=num_train_timesteps,
             beta_start=beta_start,
             beta_end=beta_end,
             beta_schedule=beta_schedule,
@@ -73,10 +75,10 @@ class DDPMScheduler(SchedulerMixin, ConfigMixin):
         if trained_betas is not None:
             self.betas = np.asarray(trained_betas)
         elif beta_schedule == "linear":
-            self.betas = np.linspace(beta_start, beta_end, timesteps, dtype=np.float32)
+            self.betas = np.linspace(beta_start, beta_end, num_train_timesteps, dtype=np.float32)
         elif beta_schedule == "squaredcos_cap_v2":
             # Glide cosine schedule
-            self.betas = betas_for_alpha_bar(timesteps)
+            self.betas = betas_for_alpha_bar(num_train_timesteps)
         else:
             raise NotImplementedError(f"{beta_schedule} does is not implemented for {self.__class__}")
 
@@ -112,7 +114,14 @@ class DDPMScheduler(SchedulerMixin, ConfigMixin):
 
         return variance
 
-    def step(self, residual, sample, t, predict_epsilon=True):
+    def step(
+        self,
+        model_output: Union[torch.FloatTensor, np.ndarray],
+        timestep: int,
+        sample: Union[torch.FloatTensor, np.ndarray],
+        predict_epsilon=True,
+    ):
+        t = timestep
         # 1. compute alphas, betas
         alpha_prod_t = self.alphas_cumprod[t]
         alpha_prod_t_prev = self.alphas_cumprod[t - 1] if t > 0 else self.one
@@ -122,9 +131,9 @@ class DDPMScheduler(SchedulerMixin, ConfigMixin):
         # 2. compute predicted original sample from predicted noise also called
         # "predicted x_0" of formula (15) from https://arxiv.org/pdf/2006.11239.pdf
         if predict_epsilon:
-            pred_original_sample = (sample - beta_prod_t ** (0.5) * residual) / alpha_prod_t ** (0.5)
+            pred_original_sample = (sample - beta_prod_t ** (0.5) * model_output) / alpha_prod_t ** (0.5)
         else:
-            pred_original_sample = residual
+            pred_original_sample = model_output
 
         # 3. Clip "predicted x_0"
         if self.config.clip_sample:
@@ -139,7 +148,7 @@ class DDPMScheduler(SchedulerMixin, ConfigMixin):
         # See formula (7) from https://arxiv.org/pdf/2006.11239.pdf
         pred_prev_sample = pred_original_sample_coeff * pred_original_sample + current_sample_coeff * sample
 
-        return pred_prev_sample
+        return {"prev_sample": pred_prev_sample}
 
     def add_noise(self, original_samples, noise, timesteps):
         sqrt_alpha_prod = self.alphas_cumprod[timesteps] ** 0.5
@@ -151,4 +160,4 @@ class DDPMScheduler(SchedulerMixin, ConfigMixin):
         return noisy_samples
 
     def __len__(self):
-        return self.config.timesteps
+        return self.config.num_train_timesteps
