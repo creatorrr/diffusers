@@ -15,7 +15,7 @@ import importlib
 import os
 from collections import OrderedDict
 
-import importlib_metadata
+import importlib.metadata
 from requests.exceptions import HTTPError
 
 from .logging import get_logger
@@ -39,25 +39,25 @@ HF_MODULES_CACHE = os.getenv("HF_MODULES_CACHE", os.path.join(hf_cache_home, "mo
 
 _transformers_available = importlib.util.find_spec("transformers") is not None
 try:
-    _transformers_version = importlib_metadata.version("transformers")
+    _transformers_version = importlib.metadata.version("transformers")
     logger.debug(f"Successfully imported transformers version {_transformers_version}")
-except importlib_metadata.PackageNotFoundError:
+except importlib.metadata.PackageNotFoundError:
     _transformers_available = False
 
 
 _inflect_available = importlib.util.find_spec("inflect") is not None
 try:
-    _inflect_version = importlib_metadata.version("inflect")
+    _inflect_version = importlib.metadata.version("inflect")
     logger.debug(f"Successfully imported inflect version {_inflect_version}")
-except importlib_metadata.PackageNotFoundError:
+except importlib.metadata.PackageNotFoundError:
     _inflect_available = False
 
 
 _unidecode_available = importlib.util.find_spec("unidecode") is not None
 try:
-    _unidecode_version = importlib_metadata.version("unidecode")
+    _unidecode_version = importlib.metadata.version("unidecode")
     logger.debug(f"Successfully imported unidecode version {_unidecode_version}")
-except importlib_metadata.PackageNotFoundError:
+except importlib.metadata.PackageNotFoundError:
     _unidecode_available = False
 
 
