@@ -22,6 +22,7 @@ import unittest
 import numpy as np
 import torch
 
+from diffusers import UNetConditionalModel  # TODO(Patrick) - need to write tests with it
 from diffusers import (
     AutoencoderKL,
     DDIMPipeline,
@@ -827,7 +828,7 @@ class VQModelTests(ModelTesterMixin, unittest.TestCase):
         self.assertTrue(torch.allclose(output_slice, expected_output_slice, rtol=1e-2))
 
 
-class AutoEncoderKLTests(ModelTesterMixin, unittest.TestCase):
+class AutoencoderKLTests(ModelTesterMixin, unittest.TestCase):
     model_class = AutoencoderKL
 
     @property
@@ -929,7 +930,7 @@ class PipelineTesterMixin(unittest.TestCase):
 
     @slow
     def test_from_pretrained_hub(self):
-        model_path = "fusing/ddpm-cifar10"
+        model_path = "google/ddpm-cifar10"
 
         ddpm = DDPMPipeline.from_pretrained(model_path)
         ddpm_from_hub = DiffusionPipeline.from_pretrained(model_path)
@@ -947,9 +948,9 @@ class PipelineTesterMixin(unittest.TestCase):
 
     @slow
     def test_ddpm_cifar10(self):
-        model_id = "fusing/ddpm-cifar10"
+        model_id = "google/ddpm-cifar10"
 
-        unet = UNetUnconditionalModel.from_pretrained(model_id, ddpm=True)
+        unet = UNetUnconditionalModel.from_pretrained(model_id)
         scheduler = DDPMScheduler.from_config(model_id)
         scheduler = scheduler.set_format("pt")
 
@@ -968,9 +969,9 @@ class PipelineTesterMixin(unittest.TestCase):
 
     @slow
     def test_ddim_lsun(self):
-        model_id = "fusing/ddpm-lsun-bedroom-ema"
+        model_id = "google/ddpm-lsun-bedroom-ema"
 
-        unet = UNetUnconditionalModel.from_pretrained(model_id, ddpm=True)
+        unet = UNetUnconditionalModel.from_pretrained(model_id)
         scheduler = DDIMScheduler.from_config(model_id)
 
         ddpm = DDIMPipeline(unet=unet, scheduler=scheduler)
@@ -988,9 +989,9 @@ class PipelineTesterMixin(unittest.TestCase):
 
     @slow
     def test_ddim_cifar10(self):
-        model_id = "fusing/ddpm-cifar10"
+        model_id = "google/ddpm-cifar10"
 
-        unet = UNetUnconditionalModel.from_pretrained(model_id, ddpm=True)
+        unet = UNetUnconditionalModel.from_pretrained(model_id)
         scheduler = DDIMScheduler(tensor_format="pt")
 
         ddim = DDIMPipeline(unet=unet, scheduler=scheduler)
@@ -1008,9 +1009,9 @@ class PipelineTesterMixin(unittest.TestCase):
 
     @slow
     def test_pndm_cifar10(self):
-        model_id = "fusing/ddpm-cifar10"
+        model_id = "google/ddpm-cifar10"
 
-        unet = UNetUnconditionalModel.from_pretrained(model_id, ddpm=True)
+        unet = UNetUnconditionalModel.from_pretrained(model_id)
         scheduler = PNDMScheduler(tensor_format="pt")
 
         pndm = PNDMPipeline(unet=unet, scheduler=scheduler)
@@ -1026,10 +1027,8 @@ class PipelineTesterMixin(unittest.TestCase):
         assert (image_slice.flatten() - expected_slice).abs().max() < 1e-2
 
     @slow
-    @unittest.skip("Skipping for now as it takes too long")
     def test_ldm_text2img(self):
-        model_id = "fusing/latent-diffusion-text2im-large"
-        ldm = LatentDiffusionPipeline.from_pretrained(model_id)
+        ldm = LatentDiffusionPipeline.from_pretrained("CompVis/latent-diffusion-text2im-large")
 
         prompt = "A painting of a squirrel eating a burger"
         generator = torch.manual_seed(0)
@@ -1043,8 +1042,7 @@ class PipelineTesterMixin(unittest.TestCase):
 
     @slow
     def test_ldm_text2img_fast(self):
-        model_id = "fusing/latent-diffusion-text2im-large"
-        ldm = LatentDiffusionPipeline.from_pretrained(model_id)
+        ldm = LatentDiffusionPipeline.from_pretrained("CompVis/latent-diffusion-text2im-large")
 
         prompt = "A painting of a squirrel eating a burger"
         generator = torch.manual_seed(0)
